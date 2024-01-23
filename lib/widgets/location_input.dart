@@ -1,8 +1,18 @@
+import 'dart:convert';
+
+import 'package:favorite_places/models/place.dart';
+import 'package:favorite_places/screens/map.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:location/location.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
 
 class LocationInput extends StatefulWidget {
-  const LocationInput({super.key});
+  const LocationInput({super.key, required this.onSelectLocation});
+
+  final void Function(PlaceLocation location) onSelectLocation;
 
   @override
   State<LocationInput> createState() {
@@ -11,8 +21,35 @@ class LocationInput extends StatefulWidget {
 }
 
 class _LocationInputState extends State<LocationInput> {
-  Location? _pickedLocation;
+  PlaceLocation? _pickedLocation;
   var _isGettingLocation = false;
+
+  String get locationImage {
+    if (_pickedLocation == null) return '';
+
+    final lat = _pickedLocation!.latitude;
+    final long = _pickedLocation!.longitude;
+    return 'https://maps.googleapis.com/maps/api/staticmap?center=$lat,$long&zoom=16&size=600x300&maptype=roadmap&markers=color:red%7Clabel:A%7C$lat,$long&key=AIzaSyBugYz6ngv6GsFHgbGhRC0cJWyF5syXGhA';
+  }
+
+  Future<void> _savePlace(double latitude, double longitude) async {
+    final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=AIzaSyBugYz6ngv6GsFHgbGhRC0cJWyF5syXGhA');
+    final response = await http.get(url);
+    final resData = json.decode(response.body);
+    final address = resData['results'][0]['formatted_address'];
+
+    setState(() {
+      _pickedLocation = PlaceLocation(
+        latitude: latitude,
+        longitude: longitude,
+        address: address,
+      );
+      _isGettingLocation = false;
+    });
+
+    widget.onSelectLocation(_pickedLocation!);
+  }
 
   void _getCurrentLocation() async {
     Location location = Location();
@@ -43,11 +80,45 @@ class _LocationInputState extends State<LocationInput> {
 
     locationData = await location.getLocation();
 
-    setState(() {
-      _isGettingLocation = false;
-    });
-    print(locationData.latitude);
-    print(locationData.longitude);
+    final latitude = locationData.latitude;
+    final longitude = locationData.longitude;
+
+    if (latitude == null || longitude == null) return;
+
+    _savePlace(latitude, longitude);
+    // _openGoogleMaps(locationData.latitude!, locationData.longitude!);
+  }
+
+  void _openGoogleMaps(double latitude, double longitude) async {
+    // Construct the URL
+    var googleMapsUrl = "google.navigation:q=$latitude,$longitude&mode=d";
+
+    // Check if the URL can be launched
+    if (await canLaunchUrl(Uri.parse(googleMapsUrl))) {
+      launchUrl(Uri.parse(googleMapsUrl), mode: LaunchMode.externalApplication);
+    } else {
+      // If Google Maps is not installed, open the URL in the browser
+      var fallbackUrl =
+          "https://www.google.com/maps/search/?api=1&query=$latitude,$longitude";
+      if (await canLaunchUrl(Uri.parse(fallbackUrl))) {
+        launchUrl(Uri.parse(fallbackUrl), mode: LaunchMode.inAppBrowserView);
+      } else {
+        // Error handling
+        throw 'Could not launch URLL';
+      }
+    }
+  }
+
+  void _selectOnMap() async {
+    final pickedLocation = await Navigator.of(context).push<LatLng>(
+      MaterialPageRoute(
+        builder: (ctx) => MapScreen(),
+      ),
+    );
+
+    if (pickedLocation == null) return;
+
+    _savePlace(pickedLocation.latitude, pickedLocation.longitude);
   }
 
   @override
@@ -59,6 +130,15 @@ class _LocationInputState extends State<LocationInput> {
             color: Theme.of(context).colorScheme.onBackground,
           ),
     );
+
+    if (_pickedLocation != null) {
+      previewContent = Image.network(
+        locationImage,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
 
     if (_isGettingLocation) {
       previewContent = const CircularProgressIndicator();
@@ -87,7 +167,7 @@ class _LocationInputState extends State<LocationInput> {
               label: const Text("Get Current Location"),
             ),
             TextButton.icon(
-              onPressed: () {},
+              onPressed: _selectOnMap,
               icon: const Icon(Icons.map),
               label: const Text("Select on Map"),
             ),
